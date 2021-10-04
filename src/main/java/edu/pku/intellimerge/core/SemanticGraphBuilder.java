@@ -43,8 +43,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /** Build Semantic Graph for one merge scenario */
-public class GraphBuilder {
-  private static final Logger logger = LoggerFactory.getLogger(GraphBuilder.class);
+public class SemanticGraphBuilder {
+  private static final Logger logger = LoggerFactory.getLogger(SemanticGraphBuilder.class);
   private Graph<SemanticNode, SemanticEdge> graph;
   private JavaSymbolSolver symbolSolver;
   private JavaParserFacade javaParserFacade;
@@ -71,10 +71,11 @@ public class GraphBuilder {
   //  the context files for symbolsolving, i.e. the source folder of this java project
   private String sourceDir;
 
-  public GraphBuilder(MergeScenario mergeScenario, Side side, String collectedFilePath) {
+  public SemanticGraphBuilder(MergeScenario mergeScenario, Side side, String collectedFilePath) {
     this.mergeScenario = mergeScenario;
     this.side = side;
     this.collectedFilePath = collectedFilePath;
+    // TODO this cause failed resolving in case of file level changes
     this.sourceDir = mergeScenario.repoPath + mergeScenario.srcPath;
 
     this.graph = initGraph();
@@ -158,6 +159,7 @@ public class GraphBuilder {
     // now vertices are fixed
 
     // build the recorded edges actually
+    // TODO import can be any type, even inner type
     edgeCount = buildEdges(graph, edgeCount, importEdges, EdgeType.IMPORT, NodeType.CLASS);
     edgeCount = buildEdges(graph, edgeCount, extendEdges, EdgeType.EXTEND, NodeType.CLASS);
     edgeCount =
@@ -324,6 +326,7 @@ public class GraphBuilder {
       nodeType = cid.isInnerClass() ? NodeType.INNER_CLASS : nodeType;
       nodeType = cid.isLocalClassDeclaration() ? NodeType.LOCAL_CLASS : nodeType;
     }
+    // TODO why the toString cannot be resolved?
     List<String> modifiers = new ArrayList<>();
     //    List<String> modifiers =
     //        td.getModifiers().stream().map(Modifier::toString).collect(Collectors.toList());
@@ -355,7 +358,7 @@ public class GraphBuilder {
   }
 
   /**
-   * Process members (child nodes that are field, constructor or terminal) of type
+   * Process members (child nodes that are field, constructor or terminalNodeSimilarity) of type
    * declaration
    *
    * @param td
@@ -385,7 +388,7 @@ public class GraphBuilder {
           processMemebers(childTD, childTDNode, packageName, isInChangedFile);
         }
       } else {
-        // for other members (constructor, field, terminal), create the node
+        // for other members (constructor, field, terminalNodeSimilarity), create the node
         // add the edge from the parent td to the member
         // 4. field
         if (child instanceof FieldDeclaration) {
@@ -484,12 +487,12 @@ public class GraphBuilder {
 
           processMethodOrConstructorBody(cd, cdNode);
         }
-        // 6. terminal
+        // 6. terminalNodeSimilarity
         if (child instanceof MethodDeclaration) {
           MethodDeclaration md = (MethodDeclaration) child;
           if (md.getAnnotations().size() > 0) {
             if (md.isAnnotationPresent("Override")) {
-              // search the terminal signature in its superclass or interface
+              // search the terminalNodeSimilarity signature in its superclass or interface
             }
           }
           displayName = md.getSignature().toString();
@@ -550,7 +553,7 @@ public class GraphBuilder {
   }
 
   /**
-   * Process interactions with other nodes inside CallableDeclaration (i.e. terminal
+   * Process interactions with other nodes inside CallableDeclaration (i.e. terminalNodeSimilarity
    * or constructor) body
    *
    * @param cd
@@ -582,6 +585,7 @@ public class GraphBuilder {
     }
 
     // 2 field access
+    // TODO support self field access
     List<FieldAccessExpr> fieldAccessExprs = cd.findAll(FieldAccessExpr.class);
     List<String> readFieldNames = new ArrayList<>();
     List<String> writeFieldNames = new ArrayList<>();
@@ -607,6 +611,7 @@ public class GraphBuilder {
             ResolvedEnumConstantDeclaration resolvedEnumConstantDeclaration =
                 resolvedDeclaration.asEnumConstant();
             displayName = resolvedEnumConstantDeclaration.getName();
+            // TODO: cannot get qualified name now
             qualifiedName = resolvedEnumConstantDeclaration.getName();
           }
         } else {
@@ -634,7 +639,7 @@ public class GraphBuilder {
     if (writeFieldNames.size() > 0) {
       writeFieldEdges.put(node, writeFieldNames);
     }
-    // 3 terminal call
+    // 3 terminalNodeSimilarity call
     List<MethodCallExpr> methodCallExprs = cd.findAll(MethodCallExpr.class);
     List<String> methodCalledNames = new ArrayList<>();
     for (MethodCallExpr methodCallExpr : methodCallExprs) {
@@ -708,7 +713,7 @@ public class GraphBuilder {
    * @return
    */
   private int buildEdges(
-      Graph<SemanticNode, SemanticEdge> graph,
+      Graph<SemanticNode, SemanticEdge> semanticGraph,
       int edgeCount,
       Map<SemanticNode, List<String>> edges,
       EdgeType edgeType,
@@ -717,7 +722,7 @@ public class GraphBuilder {
       return edgeCount;
     }
 
-    Set<SemanticNode> vertexSet = graph.vertexSet();
+    Set<SemanticNode> vertexSet = semanticGraph.vertexSet();
     for (Map.Entry<SemanticNode, List<String>> entry : edges.entrySet()) {
       SemanticNode sourceNode = entry.getKey();
       List<String> targetNodeNames = entry.getValue();
@@ -727,12 +732,12 @@ public class GraphBuilder {
           // if the edge was added to the graph, returns true; if the edges already exists, returns
           // false
           boolean isSuccessful =
-              graph.addEdge(
+              semanticGraph.addEdge(
                   sourceNode,
                   targetNode,
                   new SemanticEdge(edgeCount++, edgeType, sourceNode, targetNode));
           if (!isSuccessful) {
-            SemanticEdge edge = graph.getEdge(sourceNode, targetNode);
+            SemanticEdge edge = semanticGraph.getEdge(sourceNode, targetNode);
             edge.setWeight(edge.getWeight() + 1);
           }
         }

@@ -1,12 +1,10 @@
 package edu.pku.intellimerge.core;
 
-import com.google.common.collect.BiMap;
 import edu.pku.intellimerge.io.Graph2CodePrinter;
 import edu.pku.intellimerge.model.SemanticEdge;
 import edu.pku.intellimerge.model.SemanticNode;
 import edu.pku.intellimerge.model.constant.NodeType;
 import edu.pku.intellimerge.model.constant.Side;
-import edu.pku.intellimerge.model.mapping.Refactoring;
 import edu.pku.intellimerge.model.mapping.ThreewayMapping;
 import edu.pku.intellimerge.model.mapping.TwowayMatching;
 import edu.pku.intellimerge.model.node.*;
@@ -26,24 +24,20 @@ import org.slf4j.LoggerFactory;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 /** Only the diff file/cu needs to be merged */
-public class GraphMerger {
+public class ThreewayGraphMerger {
   public TwowayMatching b2oMatching;
   public TwowayMatching b2tMatching;
   public List<ThreewayMapping> mapping;
-  private Logger logger = LoggerFactory.getLogger(GraphMerger.class);
+  private Logger logger = LoggerFactory.getLogger(ThreewayGraphMerger.class);
   private String resultDir; // merge result path
   private Graph<SemanticNode, SemanticEdge> oursGraph;
   private Graph<SemanticNode, SemanticEdge> baseGraph;
   private Graph<SemanticNode, SemanticEdge> theirsGraph;
 
-  public GraphMerger(
+  public ThreewayGraphMerger(
       String resultDir,
       Graph<SemanticNode, SemanticEdge> oursGraph,
       Graph<SemanticNode, SemanticEdge> baseGraph,
@@ -56,53 +50,53 @@ public class GraphMerger {
   }
 
   /** Threeway map the CUs that need to merge */
-  public Pair<List<Refactoring>, List<Refactoring>> threewayMap() {
+  public void threewayMap() {
     // two way matching to get three way mapping
-    GraphMatcher b2oMatcher = new GraphMatcher(baseGraph, oursGraph);
-    GraphMatcher b2tMatcher = new GraphMatcher(baseGraph, theirsGraph);
-    try {
-      ExecutorService executorService = Executors.newFixedThreadPool(2);
-      Future<TwowayMatching> task1 = executorService.submit(b2oMatcher);
-      Future<TwowayMatching> task2 = executorService.submit(b2tMatcher);
+    TwowayGraphMatcher b2oMatcher = new TwowayGraphMatcher(baseGraph, oursGraph);
+    TwowayGraphMatcher b2tMatcher = new TwowayGraphMatcher(baseGraph, theirsGraph);
+    // temporarily disable multithread, considering the debug effort with the performance
+    // improvement
+    //    try {
+    //      ExecutorService executorService = Executors.newFixedThreadPool(2);
+    //      Future<TwowayMatching> task1 = executorService.submit(b2oMatcher);
+    //      Future<TwowayMatching> task2 = executorService.submit(b2tMatcher);
 
-      b2oMatching = task1.get();
-      b2tMatching = task2.get();
+    //      b2oMatching = task1.get();
+    //      b2tMatching = task2.get();
 
-      executorService.shutdown();
-      //    b2oMatcher.topDownMatch();
-      //    b2oMatcher.bottomUpMatch();
-      //    b2tMatcher.topDownMatch();
-      //    b2tMatcher.bottomUpMatch();
-      //    b2oMatching = b2oMatcher.matching;
-      //    b2tMatching = b2tMatcher.matching;
+    //      executorService.shutdown();
+    b2oMatcher.topDownMatch();
+    b2oMatcher.bottomUpMatch();
+    b2tMatcher.topDownMatch();
+    b2tMatcher.bottomUpMatch();
+    b2oMatching = b2oMatcher.matching;
+    b2tMatching = b2tMatcher.matching;
 
-      // collect COMPILATION_UNIT mapping that need to merge
-      Set<SemanticNode> internalAndNeedToMergeNodes =
-          baseGraph.vertexSet().stream()
-              .filter(SemanticNode::isInternal)
-              .filter(SemanticNode::needToMerge)
-              .collect(Collectors.toSet());
-      for (SemanticNode node : internalAndNeedToMergeNodes) {
-        if (node instanceof CompilationUnitNode) {
-          CompilationUnitNode cu = (CompilationUnitNode) node;
-          if (cu.needToMerge() == true) {
-            // temporarily keep the mapping of cus
-            ThreewayMapping mapping =
-                new ThreewayMapping(
-                    Optional.ofNullable(b2oMatching.one2oneMatchings.getOrDefault(node, null)),
-                    Optional.of(node),
-                    Optional.ofNullable(b2tMatching.one2oneMatchings.getOrDefault(node, null)));
-            this.mapping.add(mapping);
-          }
+    // collect COMPILATION_UNIT mapping that need to merge
+    Set<SemanticNode> internalAndNeedToMergeNodes =
+        baseGraph.vertexSet().stream()
+            .filter(SemanticNode::isInternal)
+            .filter(SemanticNode::needToMerge)
+            .collect(Collectors.toSet());
+    for (SemanticNode node : internalAndNeedToMergeNodes) {
+      if (node instanceof CompilationUnitNode) {
+        CompilationUnitNode cu = (CompilationUnitNode) node;
+        if (cu.needToMerge() == true) {
+          // temporarily keep the mapping of cus
+          ThreewayMapping mapping =
+              new ThreewayMapping(
+                  Optional.ofNullable(b2oMatching.one2oneMatchings.getOrDefault(node, null)),
+                  Optional.of(node),
+                  Optional.ofNullable(b2tMatching.one2oneMatchings.getOrDefault(node, null)));
+          this.mapping.add(mapping);
         }
       }
-      return Pair.of(b2oMatching.refactorings, b2tMatching.refactorings);
-    } catch (InterruptedException e) {
-      e.printStackTrace();
-    } catch (ExecutionException e) {
-      e.printStackTrace();
     }
-    return Pair.of(new ArrayList<>(), new ArrayList<>());
+    //    } catch (InterruptedException e) {
+    //      e.printStackTrace();
+    //    } catch (ExecutionException e) {
+    //      e.printStackTrace();
+    //    }
   }
 
   /**
@@ -116,7 +110,6 @@ public class GraphMerger {
     for (ThreewayMapping mapping : mapping) {
       if (mapping.baseNode.isPresent()) {
         // merge the COMPILATION_UNIT by merging its content
-        //        SemanticNode mergedCU = mergeSingleNode(mapping.baseNode.get());
         SemanticNode mergedCU = mergeSingleNode(mapping.baseNode.get());
         // merge the package declaration and imports
         CompilationUnitNode mergedPackageAndImports = mergeCUHeader(mapping.baseNode.get());
@@ -153,70 +146,32 @@ public class GraphMerger {
                 oursCU.getPackageStatement(),
                 mergedCU.getPackageStatement(),
                 theirsCU.getPackageStatement()));
-        // conservative strategy: simply union the imports
-        //        Set<String> union = new LinkedHashSet<>(oursCU.getImportStatements());
-        //        union.addAll(theirsCU.getImportStatements());
+
+        // conservative strategy: remove no imports in case of latent bugs
+        //        Set<String> union = new LinkedHashSet<>(theirsCU.getImportStatements());
+        //        union.addAll(oursCU.getImportStatements());
         //        mergedCU.setImportStatements(union);
         //        List<String> oursList = new ArrayList<>(oursCU.getImportStatements());
         //        List<String> baseList = new ArrayList<>(((CompilationUnitNode)
         // node).getImportStatements());
         //        List<String> theirsList = new ArrayList<>(theirsCU.getImportStatements());
         //        List<String> mergedList =
-        //            Stream.of(baseList, oursList, theirsList)
+        //            Stream.of(oursList, baseList, theirsList)
         //                .flatMap(Collection::stream)
         //                .distinct()
         //                .collect(Collectors.toList());
         //        mergedCU.setImportStatements(new LinkedHashSet<>(mergedList));
-        // proactive way: apply changes to base
-        List<String> mergedImports = new ArrayList<>();
-        List<String> baseImports =
-            new ArrayList<>(((CompilationUnitNode) node).getImportStatements());
-
-        List<String> oursImports = new ArrayList<>(oursCU.getImportStatements());
-
-        List<String> addedInOurs = new ArrayList<>(oursCU.getImportStatements());
-
-        for (String str : theirsCU.getImportStatements()) {
-          int index = getChildIndexTrimed(oursImports, str);
-          if (index >= 0) {
-            addedInOurs.set(index, "");
-          }
-          mergedImports.add(str);
-        }
-
-        for (int i = 0; i < addedInOurs.size(); ++i) {
-          String str = addedInOurs.get(i);
-          if (!str.isEmpty() && getChildIndexTrimed(baseImports, str) < 0) {
-            int j = -1; // the position to insert the str
-            if (i == 0) {
-              j = 0;
-            } else {
-              // get the previous one that exist in merged imports
-              String previousImport = "";
-              for (int k = i - 1; k >= 0; k--) {
-                if (addedInOurs.get(k).equals("")) {
-                  // "" should have been in mergedImports
-                  previousImport = oursImports.get(k);
-                  j = getChildIndexTrimed(mergedImports, previousImport);
-                  break;
-                } else {
-                  previousImport = addedInOurs.get(k);
-                  j = getChildIndexTrimed(mergedImports, previousImport);
-                  if (j >= 0) {
-                    break;
-                  }
-                }
-              }
-            }
-            if (j + 1 >= 0 && j + 1 < mergedImports.size()) {
-              mergedImports.add(j + 1, str);
-            } else {
-              mergedImports.add(str);
-            }
-          }
-        }
-
-        mergedCU.setImportStatements(new LinkedHashSet<>(mergedImports));
+        String oursString =
+            oursCU.getImportStatements().stream().distinct().collect(Collectors.joining("\n"));
+        String baseString =
+            ((CompilationUnitNode) node)
+                .getImportStatements().stream().distinct().collect(Collectors.joining("\n"));
+        String theirsString =
+            theirsCU.getImportStatements().stream().distinct().collect(Collectors.joining("\n"));
+        LinkedHashSet<String> mergedSet =
+            new LinkedHashSet<>(
+                Arrays.asList(mergeTextually(oursString, baseString, theirsString).split("\n")));
+        mergedCU.setImportStatements(new LinkedHashSet<>(mergedSet));
 
         return mergedCU;
       }
@@ -224,37 +179,20 @@ public class GraphMerger {
     return null;
   }
 
-  private int getChildIndexTrimed(List<String> list, String s) {
-    for (int i = 0; i < list.size(); ++i) {
-      if (list.get(i).trim().equals(s.trim())) {
-        return i;
-      }
-    }
-    return -1;
-  }
-
   /**
-   * Merge single node but in favor of the node order of the last version (usually theirs)
+   * Merge a single node and its children in iterative way
    *
    * @param node
    * @return
    */
   private SemanticNode mergeSingleNode(SemanticNode node) {
+    // if node is terminal: merge and return result
     SemanticNode mergedNode = node.shallowClone();
     SemanticNode oursNode = b2oMatching.one2oneMatchings.getOrDefault(node, null);
     SemanticNode theirsNode = b2tMatching.one2oneMatchings.getOrDefault(node, null);
-    if (oursNode != null && theirsNode != null) {
-      // for orphan comment, merge if matched
-      if (node instanceof OrphanCommentNode) {
-        mergedNode.setOriginalSignature(
-            mergeTextually(
-                oursNode.getOriginalSignature(),
-                node.getOriginalSignature(),
-                theirsNode.getOriginalSignature()));
-        return mergedNode;
-      } else if (node instanceof TerminalNode) {
-        // for terminal: merge each part and return merged node
-        TerminalNode mergedTerminal = (TerminalNode) mergedNode;
+    if (node instanceof TerminalNode) {
+      TerminalNode mergedTerminal = (TerminalNode) mergedNode;
+      if (oursNode != null && theirsNode != null) {
         // exist in BothSides side
         TerminalNode oursTerminal = (TerminalNode) oursNode;
         TerminalNode baseTerminal = (TerminalNode) node;
@@ -283,23 +221,18 @@ public class GraphMerger {
             mergeTextually(
                 oursTerminal.getBody(), baseTerminal.getBody(), theirsTerminal.getBody());
         mergedTerminal.setComment(mergedComment);
-        if (mergedAnnotations.length() > 0) {
-          mergedTerminal.setAnnotations(Arrays.asList(mergedAnnotations.split("\n")));
-        }
+        mergedTerminal.setAnnotations(Arrays.asList(mergedAnnotations.split("\n")));
         mergedTerminal.setModifiers(mergedModifiers);
         mergedTerminal.setOriginalSignature(mergedSignature);
         mergedTerminal.setBody(mergedBody);
-
-        // update name for hash
-        mergedTerminal.setQualifiedName(
-            mergeTextually(
-                oursTerminal.getQualifiedName(),
-                baseTerminal.getQualifiedName(),
-                theirsTerminal.getQualifiedName()));
-
         return mergedTerminal;
       } else {
-        // for composite: merge comment/annotation/signature, and then children
+        // deleted in one side --> delete
+        return null;
+      }
+    } else {
+      // nonterminal
+      if (oursNode != null && theirsNode != null) {
         CompositeNode mergedNonTerminal = (CompositeNode) mergedNode;
 
         // merge the comment and signature
@@ -319,105 +252,63 @@ public class GraphMerger {
                 node.getOriginalSignature(),
                 theirsNode.getOriginalSignature());
         mergedNonTerminal.setComment(mergedComment);
-        if (mergedAnnotations.length() > 0) {
-          mergedNonTerminal.setAnnotations(Arrays.asList(mergedAnnotations.split("\n")));
-        }
-        if (mergedAnnotations.length() > 0) {
-          mergedNonTerminal.setModifiers(mergedModifiers);
-        }
+        mergedNonTerminal.setAnnotations(Arrays.asList(mergedAnnotations.split("\n")));
+        mergedNonTerminal.setModifiers(mergedModifiers);
         mergedNonTerminal.setOriginalSignature(mergedSignature);
-        // update name for hash
-        mergedNonTerminal.setQualifiedName(
-            mergeTextually(
-                oursNode.getQualifiedName(),
-                node.getQualifiedName(),
-                theirsNode.getQualifiedName()));
-        // follow the format of the right side
-        mergedNonTerminal.followingEOL = theirsNode.followingEOL;
 
-        // iteratively merge its children (in base order)
-        List<SemanticNode> children = theirsNode.getChildren();
-        BiMap<SemanticNode, SemanticNode> inversedMatching = b2tMatching.one2oneMatchings;
-        inversedMatching = inversedMatching.inverse();
+        // iteratively merge its children
+        List<SemanticNode> children = node.getChildren();
         for (SemanticNode child : children) {
-          SemanticNode childInBase = inversedMatching.getOrDefault(child, null);
-          if (childInBase == null) {
-            // insert nodes added in theirs
-            mergedNonTerminal.appendChild(child);
-          } else {
-            SemanticNode mergedChild = mergeSingleNode(childInBase);
-            if (mergedChild != null) {
-              mergedChild.followingEOL = child.followingEOL;
-              mergedNonTerminal.appendChild(mergedChild);
-            }
+          SemanticNode mergedChild = mergeSingleNode(child);
+          if (mergedChild != null) {
+            mergedNonTerminal.appendChild(mergedChild);
           }
         }
-        // insert nodes added in ours
-        List<SemanticNode> addedOurs =
-            removeDuplicates(
-                filterAddedNodes(node, b2oMatching), filterAddedNodes(node, b2tMatching));
-        mergeUnmatchedNodes(mergedNonTerminal, addedOurs);
+        // consider unmatched nodes as added ones
+        // if parent matched, insert it into the children of parent, between nearest neighbors
+        // handle possible duplicate added nodes to avoid semantic conflicts
+        Map<NodeType, List<SemanticNode>> addedOurs = b2oMatching.unmatchedNodes2;
+        Map<NodeType, List<SemanticNode>> addedTheirs = b2tMatching.unmatchedNodes2;
+        Pair<List<SemanticNode>, List<SemanticNode>> pair =
+            removeDuplicateAddedNodes(addedOurs, addedTheirs);
+        mergeUnmatchedNodes(node, mergedNonTerminal, b2oMatching, pair.getLeft());
+        mergeUnmatchedNodes(node, mergedNonTerminal, b2tMatching, pair.getRight());
 
         return mergedNonTerminal;
+      } else {
+        // deleted in one side --> delete
+        return null;
       }
-    } else {
-      // if delete in one side, delete it
-      return null;
     }
   }
 
   /**
-   * Get the added node under the composite node
-   *
-   * @param node
-   * @param matching
-   * @return
-   */
-  private List<SemanticNode> filterAddedNodes(SemanticNode node, TwowayMatching matching) {
-    Map<NodeType, List<SemanticNode>> unmatchedNodes = matching.unmatchedNodes2;
-    // for each type of newly added nodes
-    List<SemanticNode> addedNodes = new ArrayList<>();
-    List<SemanticNode> results = new ArrayList<>();
-    for (Map.Entry<NodeType, List<SemanticNode>> entry : unmatchedNodes.entrySet()) {
-      addedNodes.addAll(entry.getValue());
-    }
-    SemanticNode matchedParentNode = matching.one2oneMatchings.getOrDefault(node, null);
-    if (matchedParentNode != null) {
-      for (SemanticNode newlyAdded : addedNodes) {
-        SemanticNode parent = newlyAdded.getParent();
-        if (parent != null && parent.equals(matchedParentNode)) {
-          results.add(newlyAdded);
-        }
-      }
-    }
-
-    results =
-        new ArrayList(
-            results.stream()
-                .sorted(Comparator.comparing(SemanticNode::getNodeID))
-                .collect(Collectors.toList()));
-    return results;
-  }
-
-  /**
-   * Remove nodes with the same signature but added in both sides
+   * Handle duplicate added nodes to avoid semantic conflicts, rare but still possible
    *
    * @param addedOurs
    * @param addedTheirs
    */
-  private List<SemanticNode> removeDuplicates(
-      List<SemanticNode> addedOurs, List<SemanticNode> addedTheirs) {
-
-    List<SemanticNode> nodes2Copy = new ArrayList<>(addedOurs);
-    for (SemanticNode n1 : addedTheirs) {
+  private Pair<List<SemanticNode>, List<SemanticNode>> removeDuplicateAddedNodes(
+      Map<NodeType, List<SemanticNode>> addedOurs, Map<NodeType, List<SemanticNode>> addedTheirs) {
+    // for each type of newly added nodes
+    List<SemanticNode> nodes1 = new ArrayList<>();
+    List<SemanticNode> nodes2 = new ArrayList<>();
+    for (Map.Entry<NodeType, List<SemanticNode>> entry : addedOurs.entrySet()) {
+      nodes1.addAll(entry.getValue());
+    }
+    for (Map.Entry<NodeType, List<SemanticNode>> entry : addedTheirs.entrySet()) {
+      nodes2.addAll(entry.getValue());
+    }
+    List<SemanticNode> nodes2Copy = new ArrayList<>(nodes2);
+    for (SemanticNode n1 : nodes1) {
       for (SemanticNode n2 : nodes2Copy) {
         if (n1.getOriginalSignature().equals(n2.getOriginalSignature())) {
           // if the signature is duplicate, remove one of them
-          addedOurs.remove(n2);
+          nodes2.remove(n2);
         }
       }
     }
-    return addedOurs;
+    return Pair.of(nodes1, nodes2);
   }
 
   /**
@@ -504,12 +395,22 @@ public class GraphMerger {
   /**
    * Merge unmatched nodes (added) from ours and theirs
    *
+   * @param node parent node to add into
    * @param mergedNonTerminal
    */
-  private void mergeUnmatchedNodes(CompositeNode mergedNonTerminal, List<SemanticNode> addedNodes) {
-    for (SemanticNode newlyAdded : addedNodes) {
-      SemanticNode parent = newlyAdded.getParent();
-      insertBetweenNeighbors(mergedNonTerminal, getNeighbors(parent, newlyAdded));
+  private void mergeUnmatchedNodes(
+      SemanticNode node,
+      CompositeNode mergedNonTerminal,
+      TwowayMatching matching,
+      List<SemanticNode> addedNodes) {
+    SemanticNode matchedParentNode = matching.one2oneMatchings.getOrDefault(node, null);
+    if (matchedParentNode != null) {
+      for (SemanticNode newlyAdded : addedNodes) {
+        SemanticNode parent = newlyAdded.getParent();
+        if (parent != null && parent.equals(matchedParentNode)) {
+          insertBetweenNeighbors(mergedNonTerminal, getNeighbors(parent, newlyAdded));
+        }
+      }
     }
   }
   /**
@@ -551,23 +452,11 @@ public class GraphMerger {
     SemanticNode nodeBefore = null;
     SemanticNode nodeAfter = null;
     int position = parent.getChildPosition(child);
-    
-    // find the non orphan comment neighbors
     if (position > 0) {
-      for (int i = position - 1; i >= 0; --i) {
-        nodeBefore = parent.getChildAtPosition(i);
-        if (!(nodeBefore instanceof OrphanCommentNode)) {
-          break;
-        }
-      }
+      nodeBefore = parent.getChildAtPosition(position - 1);
     }
     if (position < parent.getChildren().size() - 1) {
-      for (int i = position + 1; i < parent.getChildren().size(); ++i) {
-        nodeAfter = parent.getChildAtPosition(i);
-        if (!(nodeAfter instanceof OrphanCommentNode)) {
-          break;
-        }
-      }
+      nodeAfter = parent.getChildAtPosition(position + 1);
     }
     return Triple.of(nodeBefore, child, nodeAfter);
   }
@@ -582,13 +471,6 @@ public class GraphMerger {
    */
   private String mergeTextually(String leftContent, String baseContent, String rightContent) {
     String textualMergeResult = null;
-    // jgit has bug with single side change
-    if (leftContent.equals(baseContent)) {
-      return rightContent;
-    }
-    if (rightContent.equals(baseContent)) {
-      return leftContent;
-    }
     try {
       // TODO merge with git-merge for diff3 conflict style
       RawTextComparator textComparator = RawTextComparator.WS_IGNORE_ALL; //  ignoreWhiteSpaces

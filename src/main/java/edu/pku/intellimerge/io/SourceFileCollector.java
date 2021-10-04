@@ -138,8 +138,11 @@ public class SourceFileCollector {
     }
     if (sideCommitID != null) {
       //      ArrayList<SourceFile> javaSourceFiles = scanJavaFiles(sideCommitID);
+      // The following line was modified by Max Ellis.
+      // Removed File.seperator on the line below because it was adding one too
+      // many "/". i.e. "base//path".
       String sideCollectedFilePath =
-          collectedFilePath + side.toString().toLowerCase() + File.separator;
+              collectedFilePath + side.toString().toLowerCase();
       if (diffEntries != null) {
         //        collect(javaSourceFiles, diffEntries, sideCollectedFilePath);
         collect2(diffEntries, sideCollectedFilePath, sideCommitID);
@@ -362,6 +365,38 @@ public class SourceFileCollector {
           logger.error("{} not exists", relativePath);
         }
       }
+    }
+  }
+
+  /**
+   * This code was added and modified by Max Ellis.
+   * Collect the source files from the provided commits
+   */
+  public SourceFileCollector(String repoPath, List<String> commitHashes, String collectedDir, boolean isEvaluation) {
+    try {
+      this.repository = GitService.createRepository(repoPath);
+      this.mergeScenario = generateMergeScenarioFromCommits(commitHashes);
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    this.collectedFilePath = collectedDir;
+    this.copyImportedFiles = false;
+  }
+
+  /**
+   * This code was added and modified by Max Ellis.
+   * Use the commitIds provided
+   */
+  private MergeScenario generateMergeScenarioFromCommits(List<String> commitHashes) throws Exception {
+    if(repository != null) {
+      String oursCommitID = commitHashes.get(0);
+      String baseCommitID = commitHashes.get(1);
+      String theirsCommitID = commitHashes.get(2);
+      MergeScenario mergeScenario = new MergeScenario(oursCommitID, baseCommitID, theirsCommitID);
+      return mergeScenario;
+    }
+    else {
+      return null;
     }
   }
 }

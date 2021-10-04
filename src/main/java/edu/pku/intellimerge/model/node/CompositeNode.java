@@ -10,10 +10,6 @@ import java.util.Optional;
 
 public class CompositeNode extends SemanticNode {
 
-  // prefix strings before '{'
-  public String curlyBracePrefix = "";
-  // number of EOLs between { and the first child
-  public int beforeFirstChildEOL = 1;
   // type decl
   public CompositeNode(
       Integer nodeID,
@@ -87,22 +83,17 @@ public class CompositeNode extends SemanticNode {
 
   @Override
   public SemanticNode shallowClone() {
-    CompositeNode clone =
-        new CompositeNode(
-            this.getNodeID(),
-            this.needToMerge(),
-            this.getNodeType(),
-            this.getDisplayName(),
-            this.getQualifiedName(),
-            this.getOriginalSignature(),
-            this.getComment(),
-            this.getAnnotations(),
-            this.getModifiers(),
-            this.getRange());
-    clone.curlyBracePrefix = this.curlyBracePrefix;
-    clone.beforeFirstChildEOL = this.beforeFirstChildEOL;
-    clone.followingEOL = this.followingEOL;
-    return clone;
+    return new CompositeNode(
+        this.getNodeID(),
+        this.needToMerge(),
+        this.getNodeType(),
+        this.getDisplayName(),
+        this.getQualifiedName(),
+        this.getOriginalSignature(),
+        this.getComment(),
+        this.getAnnotations(),
+        this.getModifiers(),
+        this.getRange());
   }
 
   @Override

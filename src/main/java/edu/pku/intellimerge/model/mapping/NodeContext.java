@@ -3,7 +3,6 @@ package edu.pku.intellimerge.model.mapping;
 import edu.pku.intellimerge.model.SemanticEdge;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -43,10 +42,6 @@ public class NodeContext {
     return outgoingEdges;
   }
 
-  public void setOutgoingEdges(Set edges) {
-    this.outgoingEdges = edges;
-  }
-
   public Map<Integer, Integer> getIncomingVector() {
     return incomingVector;
   }
@@ -61,26 +56,5 @@ public class NodeContext {
 
   public void putOutgoingVector(Integer key, Integer value) {
     this.outgoingVector.put(key, value);
-  }
-
-  public NodeContext join(NodeContext context) {
-    Set<SemanticEdge> combinedIncomingEdges = new HashSet<>();
-    Set<SemanticEdge> combinedOutgoingEdges = new HashSet<>();
-    combinedIncomingEdges.addAll(this.incomingEdges);
-    combinedIncomingEdges.addAll(context.getIncomingEdges());
-    combinedOutgoingEdges.addAll(this.outgoingEdges);
-    combinedOutgoingEdges.addAll(context.getOutgoingEdges());
-
-    Map<Integer, Integer> combinedInVec = new HashMap<>(this.incomingVector);
-    Map<Integer, Integer> combinedOutVec = new HashMap<>(this.outgoingVector);
-    context
-        .getIncomingVector()
-        .forEach((key, value) -> combinedInVec.merge(key, value, (v1, v2) -> (v1 + v2)));
-    context
-        .getOutgoingVector()
-        .forEach((key, value) -> combinedOutVec.merge(key, value, (v1, v2) -> (v1 + v2)));
-
-    return new NodeContext(
-        combinedIncomingEdges, combinedOutgoingEdges, combinedInVec, combinedOutVec);
   }
 }

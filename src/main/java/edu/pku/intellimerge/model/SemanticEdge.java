@@ -83,14 +83,6 @@ public class SemanticEdge {
     return this.edgeType.isStructureEdge;
   }
 
-  public SemanticNode getSource() {
-    return source;
-  }
-
-  public SemanticNode getTarget() {
-    return target;
-  }
-
   @Override
   public int hashCode() {
     final int prime = 31;

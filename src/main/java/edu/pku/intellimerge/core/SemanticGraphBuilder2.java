@@ -1,6 +1,9 @@
 package edu.pku.intellimerge.core;
 
-import com.github.javaparser.*;
+import com.github.javaparser.JavaParser;
+import com.github.javaparser.JavaToken;
+import com.github.javaparser.ParseResult;
+import com.github.javaparser.TokenRange;
 import com.github.javaparser.ast.*;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.comments.Comment;
@@ -36,11 +39,12 @@ import java.io.FileNotFoundException;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /** Build Semantic Graph for one merge scenario, with fuzzy matching instead of symbolsolving */
-public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge>> {
-  private static final Logger logger = LoggerFactory.getLogger(GraphBuilderV2.class);
+public class SemanticGraphBuilder2 implements Callable<Graph<SemanticNode, SemanticEdge>> {
+  private static final Logger logger = LoggerFactory.getLogger(SemanticGraphBuilder2.class);
   private Graph<SemanticNode, SemanticEdge> graph;
   // incremental id, unique in one side's graph
   private int nodeCount;
@@ -74,7 +78,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
    * @param side
    * @param targetDir
    */
-  public GraphBuilderV2(String targetDir, Side side, boolean hasMultiModule) {
+  public SemanticGraphBuilder2(String targetDir, Side side, boolean hasMultiModule) {
     this.mergeScenario = null;
     this.side = side;
     this.targetDir = targetDir;
@@ -93,7 +97,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
    * @param targetDir
    * @param hasMultiModule
    */
-  public GraphBuilderV2(Side side, String targetDir, boolean hasMultiModule) {
+  public SemanticGraphBuilder2(Side side, String targetDir, boolean hasMultiModule) {
     this.mergeScenario = null;
     this.side = side;
     this.targetDir = targetDir;
@@ -113,7 +117,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
    * @param targetDir
    * @param hasMultiModule
    */
-  public GraphBuilderV2(
+  public SemanticGraphBuilder2(
       MergeScenario mergeScenario, Side side, String targetDir, boolean hasMultiModule) {
     this.mergeScenario = mergeScenario;
     this.side = side;
@@ -133,7 +137,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
    * @param targetDir
    * @param fileRelativePaths
    */
-  public GraphBuilderV2(Side side, String targetDir, List<String> fileRelativePaths) {
+  public SemanticGraphBuilder2(Side side, String targetDir, List<String> fileRelativePaths) {
     this.mergeScenario = null;
     this.side = side;
     this.targetDir = targetDir;
@@ -215,7 +219,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
     /*
      * build the graph by analyzing every COMPILATION_UNIT
      */
-    logger.info("Found ({}) files in {}.", compilationUnits.size(), side.asString());
+    logger.info("({}) CUs in {}", compilationUnits.size(), side);
     for (CompilationUnit cu : compilationUnits) {
       processCompilationUnit(cu);
     }
@@ -289,15 +293,6 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
     boolean isInChangedFile =
         mergeScenario == null ? true : mergeScenario.isInChangedFile(side, relativePath);
 
-    LinkedHashSet<String> importStatements = new LinkedHashSet();
-
-    for (ImportDeclaration importDeclaration : cu.getImports()) {
-      String temp = importDeclaration.toString().trim();
-      for (int i = 0; i < getFollowingEOL(importDeclaration); ++i) {
-        temp = temp + System.lineSeparator();
-      }
-      importStatements.add(temp);
-    }
     CompilationUnitNode cuNode =
         new CompilationUnitNode(
             nodeCount++,
@@ -311,7 +306,9 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
             relativePath,
             absolutePath,
             cu.getPackageDeclaration().map(PackageDeclaration::toString).orElse(""),
-            importStatements);
+            cu.getImports().stream()
+                .map(ImportDeclaration::toString)
+                .collect(Collectors.toCollection(LinkedHashSet::new)));
     graph.addVertex(cuNode);
 
     // 1. package
@@ -460,11 +457,8 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
 
     List<String> annotations =
         (List<String>)
-              td.getAnnotations().stream()
-                .map(anno -> ((AnnotationExpr) anno).getTokenRange().get().toString())
-                .collect(Collectors.toList());
+            td.getAnnotations().stream().map(anno -> anno.toString()).collect(Collectors.toList());
 
-    Optional<Range> range = td.getRange();
     String originalSignature = getTypeOriginalSignature(td);
 
     TypeDeclNode tdNode =
@@ -481,16 +475,13 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
             modifiers,
             nodeType.asString(),
             displayName,
-            range);
-
-    tdNode.curlyBracePrefix = getCurlyBracePrefix(td, originalSignature);
-    tdNode.beforeFirstChildEOL = getChildrenLeadingEOL(td);
-    tdNode.followingEOL = getFollowingEOL(td);
+            td.getRange());
     return tdNode;
   }
 
   /**
-   * Process members (child nodes that are field, constructor or terminal) of type declaration
+   * Process members (child nodes that are field, constructor or terminalNodeSimilarity) of type
+   * declaration
    *
    * @param td
    * @param tdNode
@@ -515,18 +506,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
         });
 
     for (Node child : orderedChildNodes) {
-      // catch orphan comments
-      if (child instanceof Comment) {
-        Comment c = (Comment) child;
-        if (c.isOrphan()) {
-          String content = c.getTokenRange().map(TokenRange::toString).orElse("");
-          OrphanCommentNode ocNode =
-              new OrphanCommentNode(nodeCount++, content, content, content, c.getRange());
-          ocNode.followingEOL = getFollowingEOL(child);
-          graph.addVertex(ocNode);
-          tdNode.appendChild(ocNode);
-        }
-      } else if (child instanceof TypeDeclaration) {
+      if (child instanceof TypeDeclaration) {
         TypeDeclaration childTD = (TypeDeclaration) child;
         if (childTD.isNestedType()) {
           // add edge from the parent td to the nested td
@@ -543,7 +523,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
           processMemebers(childTD, childTDNode, qualifiedTypeName, isInChangedFile);
         }
       } else {
-        // for other members (constructor, field, terminal), create the node
+        // for other members (constructor, field, terminalNodeSimilarity), create the node
         // add the edge from the parent td to the member
         if (child instanceof EnumConstantDeclaration) {
           EnumConstantDeclaration ecd = (EnumConstantDeclaration) child;
@@ -565,7 +545,6 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                   comment,
                   body,
                   ecd.getRange());
-          ecdNode.followingEOL = getFollowingEOL(ecd);
           graph.addVertex(ecdNode);
 
           // add edge between field and class
@@ -586,18 +565,12 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                   .map(String::trim)
                   .collect(Collectors.toList());
           for (VariableDeclarator field : fd.getVariables()) {
-            displayName = field.getNameAsString().trim();
+            displayName = field.toString().trim();
             qualifiedName = qualifiedTypeName + "." + displayName;
-            originalSignature =
-                (modifiers.stream().collect(Collectors.joining(" "))
-                        + " "
-                        + field.getType().getTokenRange().get().toString()
-                        + " "
-                        + field.getNameAsString())
-                    .trim();
+            originalSignature = (field.getTypeAsString() + " " + field.getNameAsString()).trim();
             body =
                 field.getInitializer().isPresent()
-                    ? field.getTokenRange().get().toString().replaceFirst(displayName, "") + ";"
+                    ? " = " + field.getInitializer().get().toString() + ";"
                     : ";";
 
             annotations =
@@ -620,7 +593,6 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                     field.getNameAsString(),
                     body,
                     fd.getRange());
-            fdNode.followingEOL = getFollowingEOL(fd);
             graph.addVertex(fdNode);
 
             // add edge between field and class
@@ -672,30 +644,13 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                   NodeType.CONSTRUCTOR,
                   displayName,
                   qualifiedName,
-                  "",
+                  cd.getDeclarationAsString(false, true, true),
                   comment,
                   annotations,
                   modifiers,
                   displayName,
                   body,
                   cd.getRange());
-          cdNode.followingEOL = getFollowingEOL(cd);
-          // get the original signature of constructor
-          String temp = cd.removeComment().getTokenRange().get().toString();
-          originalSignature = cd.getDeclarationAsString(false, true, true);
-          String[] tokens = originalSignature.split(" ");
-          int startIndex = temp.indexOf(tokens[0]);
-          startIndex = startIndex >= 0 ? startIndex : 0;
-          int endIndex =
-              temp.indexOf(tokens[tokens.length - 1]) + tokens[tokens.length - 1].length();
-          endIndex = endIndex >= 0 ? endIndex : 0;
-          if (startIndex <= endIndex) {
-            originalSignature = temp.substring(startIndex, endIndex);
-          }
-          originalSignature =
-              modifiers.stream().collect(Collectors.joining(" ")) + " " + originalSignature;
-          cdNode.setOriginalSignature(originalSignature);
-
           graph.addVertex(cdNode);
 
           tdNode.appendChild(cdNode);
@@ -704,12 +659,12 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
 
           processBodyContent(cd, cdNode);
         }
-        // 6. MethodDeclaration
+        // 6. terminalNodeSimilarity
         if (child instanceof MethodDeclaration) {
           MethodDeclaration md = (MethodDeclaration) child;
           if (md.getAnnotations().size() > 0) {
             if (md.isAnnotationPresent("Override")) {
-              // search the terminal signature in its superclass or interface
+              // search the terminalNodeSimilarity signature in its superclass or interface
             }
           }
           comment = getComment(md);
@@ -748,12 +703,23 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                   .map(ReferenceType::toString)
                   .collect(Collectors.toList());
 
-          if (md.getBody().isPresent()) {
-            body = getCallableBody(md);
+          // md.getDeclarationAsString() does not include type parameters, so we need to insert type
+          // [<type parameters>] [return type] [terminalNodeSimilarity name] [parameter type]
+          if (typeParameters.size() > 0) {
+            String typeParametersAsString =
+                "<" + typeParameters.stream().collect(Collectors.joining(",")) + ">";
+            originalSignature =
+                md.getDeclarationAsString(false, true, true)
+                    .trim()
+                    .replaceFirst(
+                        Pattern.quote(md.getTypeAsString()),
+                        typeParametersAsString + " " + md.getTypeAsString());
           } else {
-            body = ";";
+            originalSignature = md.getDeclarationAsString(false, true, true);
           }
 
+          body = getCallableBody(md);
+          body = body.length() > 0 ? body : ";";
           MethodDeclNode mdNode =
               new MethodDeclNode(
                   nodeCount++,
@@ -761,7 +727,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                   NodeType.METHOD,
                   displayName,
                   qualifiedName,
-                  "",
+                  originalSignature,
                   comment,
                   annotations,
                   access,
@@ -775,36 +741,6 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                   body,
                   md.getRange());
           mdNode.setParameterList(parameterList);
-
-          // md.getDeclarationAsString() cannot return type parameters, so we need to insert type
-          // [<type parameters>] [return type] [terminal name] [parameter type]
-          if (typeParameters.size() > 0) {
-            String typeParametersAsString =
-                "<" + typeParameters.stream().collect(Collectors.joining(",")) + ">";
-            originalSignature =
-                typeParametersAsString + " " + md.getDeclarationAsString(false, true, true);
-          } else {
-            // directly get token range to preserve spaces
-            originalSignature = md.getDeclarationAsString(false, true, true);
-          }
-
-          String temp = md.removeComment().getTokenRange().get().toString();
-          String[] tokens = originalSignature.split(" ");
-          int startIndex = temp.indexOf(tokens[0]);
-          startIndex = startIndex >= 0 ? startIndex : 0;
-          int endIndex =
-              temp.indexOf(tokens[tokens.length - 1]) + tokens[tokens.length - 1].length();
-          endIndex = endIndex >= 0 ? endIndex : 0;
-          if (startIndex <= endIndex) {
-            originalSignature = temp.substring(startIndex, endIndex);
-          } else {
-            originalSignature = md.getDeclarationAsString(false, true, true);
-          }
-          originalSignature =
-              modifiers.stream().collect(Collectors.joining(" ")) + " " + originalSignature;
-          mdNode.setOriginalSignature(originalSignature);
-
-          mdNode.followingEOL = getFollowingEOL(md);
           graph.addVertex(mdNode);
 
           tdNode.appendChild(mdNode);
@@ -835,7 +771,6 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                 id.isStatic(),
                 id.getBody().toString(),
                 id.getRange());
-        idNode.followingEOL = getFollowingEOL(id);
         graph.addVertex(idNode);
 
         tdNode.appendChild(idNode);
@@ -860,7 +795,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
             amd.toString().contains("default")
                 ? amd.toString().substring(amd.toString().indexOf("default")).trim()
                 : ";";
-        AnnotationMemberNode amNode =
+        AnnotationMemberNode idNode =
             new AnnotationMemberNode(
                 nodeCount++,
                 isInChangedFile,
@@ -873,28 +808,27 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
                 new ArrayList<>(), // no modifiers
                 body,
                 amd.getRange());
+        graph.addVertex(idNode);
 
-        amNode.followingEOL = getFollowingEOL(amd);
-        graph.addVertex(amNode);
-        tdNode.appendChild(amNode);
+        tdNode.appendChild(idNode);
         graph.addEdge(
-            tdNode, amNode, new SemanticEdge(edgeCount++, EdgeType.DEFINE, tdNode, amNode));
+            tdNode, idNode, new SemanticEdge(edgeCount++, EdgeType.DEFINE, tdNode, idNode));
 
-        processBodyContent(amd, amNode);
+        processBodyContent(amd, idNode);
       }
     }
   }
 
   /**
-   * Process interactions with other nodes inside CallableDeclaration (i.e. terminal or constructor)
-   * body
+   * Process interactions with other nodes inside CallableDeclaration (i.e. terminalNodeSimilarity
+   * or constructor) body
    *
-   * @param nodeWithBody
+   * @param cd
    * @param node
    */
-  private void processBodyContent(Node nodeWithBody, TerminalNode node) {
+  private void processBodyContent(Node cd, TerminalNode node) {
     // 1 new instance
-    List<ObjectCreationExpr> objectCreationExprs = nodeWithBody.findAll(ObjectCreationExpr.class);
+    List<ObjectCreationExpr> objectCreationExprs = cd.findAll(ObjectCreationExpr.class);
     List<String> createObjectNames = new ArrayList<>();
     for (ObjectCreationExpr objectCreationExpr : objectCreationExprs) {
       String typeName = objectCreationExpr.getTypeAsString();
@@ -905,8 +839,8 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
     }
 
     // 2 field access
-    // TODO support this.* access
-    List<FieldAccessExpr> fieldAccessExprs = nodeWithBody.findAll(FieldAccessExpr.class);
+    // TODO support self field access
+    List<FieldAccessExpr> fieldAccessExprs = cd.findAll(FieldAccessExpr.class);
     List<FieldAccessExpr> readFieldExprs = new ArrayList<>();
     List<FieldAccessExpr> writeFieldExprs = new ArrayList<>();
     for (FieldAccessExpr fieldAccessExpr : fieldAccessExprs) {
@@ -918,13 +852,10 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
           AssignExpr parentAssign = (AssignExpr) parent;
           if (parentAssign.getTarget().equals(fieldAccessExpr)) {
             writeFieldExprs.add(fieldAccessExpr);
-          } else {
-            readFieldExprs.add(fieldAccessExpr);
           }
-        } else {
-          readFieldExprs.add(fieldAccessExpr);
         }
       }
+      readFieldExprs.add(fieldAccessExpr);
     }
     if (readFieldExprs.size() > 0) {
       readFieldEdges.put(node, readFieldExprs);
@@ -932,8 +863,8 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
     if (writeFieldExprs.size() > 0) {
       writeFieldEdges.put(node, writeFieldExprs);
     }
-    // 3 terminal call
-    List<MethodCallExpr> methodCallExprs = nodeWithBody.findAll(MethodCallExpr.class);
+    // 3 terminalNodeSimilarity call
+    List<MethodCallExpr> methodCallExprs = cd.findAll(MethodCallExpr.class);
     this.methodCallExprs.put(node, methodCallExprs);
   }
 
@@ -946,24 +877,16 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
   private String getTypeOriginalSignature(TypeDeclaration typeDeclaration) {
     // remove comment if there is in string representation
     //        String source = removeComment(typeDeclaration.toString());
+    String source = typeDeclaration.removeComment().toString();
     // if the comment bug in JavaParser is triggered, the comment is not completely removed
     //    List<String> lines = Arrays.asList(source.split("\n"));
     //    source = lines.stream().filter(line ->
     // !line.startsWith("\\s\\*")).collect(Collectors.joining("\n"));
-    String code = typeDeclaration.removeComment().getTokenRange().get().toString();
-    // remove annotations
-    String result = "";
-    String[] temp = code.split("\\r?\\n");
-    for (int i = 0; i < temp.length; ++i) {
-      if (!temp[i].trim().startsWith("@")) {
-        result = result + temp[i] + "\n";
-      }
-    }
 
-    if (result.indexOf("{") > 0) {
-      return result.substring(0, result.indexOf("{")).trim();
+    if (source.indexOf("{") > 0) {
+      return source.substring(0, source.indexOf("{")).trim();
     } else {
-      return result.trim();
+      return source.trim();
     }
   }
 
@@ -1005,92 +928,25 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
    * @return
    */
   private String getCallableBody(CallableDeclaration declaration) {
-    String originalCode =
-        declaration.removeComment().getTokenRange().map(TokenRange::toString).orElse("");
-    if (originalCode.length() > 0) {
-      int i = originalCode.indexOf("{");
-      if (i > 0) {
-        int j = originalCode.substring(0, i).lastIndexOf(")");
-        if (j > 0) {
-          return originalCode.substring(j + 1);
-        }
-      }
-    }
-    return " " + removeSignature(originalCode);
-  }
-
-  /**
-   * Count the number of following blank lines after a node
-   *
-   * @param node
-   * @return
-   */
-  private int getFollowingEOL(Node node) {
-    int count = 0;
-    // every line has at least one '\n'
+    boolean endWithBlankLine = false;
     Optional<JavaToken> nextToken =
-        node.getTokenRange()
+        declaration
+            .getTokenRange()
             .map(TokenRange::getEnd)
             .map(JavaToken::getNextToken)
             .orElse(Optional.empty());
-    while (nextToken.isPresent()) {
+    if (nextToken.isPresent()) {
       if (nextToken.get().getCategory().isEndOfLine()) {
-        count++;
-        nextToken = nextToken.get().getNextToken();
-      } else if (nextToken.get().getCategory().isWhitespaceButNotEndOfLine()) {
-        nextToken = nextToken.get().getNextToken();
-      } else {
-        break;
-      }
-    }
-    return count;
-  }
-
-  private String getCurlyBracePrefix(TypeDeclaration td, String originalSignature) {
-    String tdCodeNoComment =
-        td.removeComment().getTokenRange().map(TokenRange::toString).orElse("");
-    if (tdCodeNoComment.length() > 0) {
-      String tdCodeNoAnnotation =
-          tdCodeNoComment.substring(tdCodeNoComment.indexOf(originalSignature));
-      int i = tdCodeNoAnnotation.indexOf("{");
-      if (i > 0) {
-        return tdCodeNoAnnotation.substring(
-            tdCodeNoAnnotation.indexOf(originalSignature) + originalSignature.length(), i);
-      }
-    }
-    return "";
-  }
-
-  /**
-   * Count the number of leading blank lines between the children and the {
-   *
-   * @param td
-   * @return
-   */
-  private int getChildrenLeadingEOL(TypeDeclaration td) {
-    int count = 0;
-    if (td.getMembers().size() == 0) {
-      return 0;
-    } else {
-      Optional<JavaToken> previousToken =
-          td.getMember(0)
-              .getTokenRange()
-              .map(TokenRange::getBegin)
-              .map(JavaToken::getPreviousToken)
-              .orElse(Optional.empty());
-      while (previousToken.isPresent()) {
-        if (previousToken.get().getCategory().isEndOfLine()) {
-          count++;
-          previousToken = previousToken.get().getPreviousToken();
-        } else if (previousToken.get().getCategory().isWhitespaceButNotEndOfLine()
-            || previousToken.get().getCategory().isWhitespace()) {
-          previousToken = previousToken.get().getPreviousToken();
-        } else {
-          break;
+        Optional<JavaToken> nextNextToken = nextToken.get().getNextToken();
+        if (nextNextToken.isPresent()) {
+          endWithBlankLine = nextNextToken.get().getCategory().isEndOfLine();
         }
       }
-      return count;
     }
+    return " "
+        + removeSignature(
+            declaration.removeComment().getTokenRange().map(TokenRange::toString).orElse(""))
+        + (endWithBlankLine ? System.lineSeparator() + System.lineSeparator() : "");
   }
 
   private String removeSignature(String string) {
@@ -1172,7 +1028,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
    */
   private int buildEdgesForMethodCall(
       int edgeCount, Map<SemanticNode, List<MethodCallExpr>> methodCallExprs) {
-    // for every terminal call, find its declaration by terminal name
+    // for every terminalNodeSimilarity call, find its declaration by terminalNodeSimilarity name
     // and paramater num
     for (Map.Entry<SemanticNode, List<MethodCallExpr>> entry : methodCallExprs.entrySet()) {
       SemanticNode caller = entry.getKey();
@@ -1257,7 +1113,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
    * @return
    */
   private int buildEdges(
-      Graph<SemanticNode, SemanticEdge> graph,
+      Graph<SemanticNode, SemanticEdge> semanticGraph,
       int edgeCount,
       Map<SemanticNode, List<String>> edges,
       EdgeType edgeType,
@@ -1266,7 +1122,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
       return edgeCount;
     }
 
-    Set<SemanticNode> vertexSet = graph.vertexSet();
+    Set<SemanticNode> vertexSet = semanticGraph.vertexSet();
     for (Map.Entry<SemanticNode, List<String>> entry : edges.entrySet()) {
       SemanticNode sourceNode = entry.getKey();
       List<String> targetNodeNames = entry.getValue();
@@ -1283,12 +1139,12 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
           // if the edge was added to the graph, returns true; if the edges already exists, returns
           // false
           boolean isSuccessful =
-              graph.addEdge(
+              semanticGraph.addEdge(
                   sourceNode,
                   targetNode,
                   new SemanticEdge(edgeCount++, edgeType, sourceNode, targetNode));
           if (!isSuccessful) {
-            SemanticEdge edge = graph.getEdge(sourceNode, targetNode);
+            SemanticEdge edge = semanticGraph.getEdge(sourceNode, targetNode);
             if (edge != null) {
               edge.setWeight(edge.getWeight() + 1);
             }
@@ -1356,7 +1212,7 @@ public class GraphBuilderV2 implements Callable<Graph<SemanticNode, SemanticEdge
               fieldAccessString.lastIndexOf("."), fieldAccessString.length());
     }
     String displayName = fieldAccessString;
-    // for terminal, match by terminal name and paramater num
+    // for terminalNodeSimilarity, match by terminalNodeSimilarity name and paramater num
     Optional<SemanticNode> targetNodeOpt = Optional.empty();
     if (targetNodeType.equals(NodeType.FIELD)) {
 

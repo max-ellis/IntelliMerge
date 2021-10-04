@@ -6,6 +6,9 @@ import com.commentremover.exception.CommentRemoverException;
 import com.google.googlejavaformat.FormatterDiagnostic;
 import com.google.googlejavaformat.java.Formatter;
 import com.google.googlejavaformat.java.FormatterException;
+import com.univocity.parsers.common.record.Record;
+import com.univocity.parsers.csv.CsvParser;
+import com.univocity.parsers.csv.CsvParserSettings;
 import edu.pku.intellimerge.model.ConflictBlock;
 import edu.pku.intellimerge.model.SourceFile;
 import edu.pku.intellimerge.model.constant.Side;
@@ -110,20 +113,6 @@ public class Utils {
     return content;
   }
 
-  // remove all blank lines of git merged dir
-  public static void removeBlankLines(String dir) throws Exception {
-    ArrayList<SourceFile> temp = new ArrayList<>();
-    ArrayList<SourceFile> sourceFiles = Utils.scanJavaSourceFiles(dir, temp, dir);
-    for (SourceFile file : sourceFiles) {
-      List<String> lines = readFileToLines(file.getAbsolutePath());
-      String content =
-          lines.stream()
-              .filter(line -> !line.trim().isEmpty())
-              .collect(Collectors.joining(System.lineSeparator()));
-      writeContent(file.getAbsolutePath(), content, false);
-    }
-  }
-
   /**
    * Read the content of a given file.
    *
@@ -166,7 +155,6 @@ public class Utils {
       }
     } else {
       logger.error("{} does not exist!", path);
-      return lines;
     }
     return lines;
   }
@@ -178,7 +166,8 @@ public class Utils {
    * @return string content of the file, or null in case of errors.
    */
   public static List<String> writeLinesToFile(String path, List<String> lines) {
-    String content = lines.stream().collect(Collectors.joining(System.lineSeparator()));
+    String content =
+        lines.stream().filter(line -> line.length() > 0).collect(Collectors.joining("\n"));
     writeContent(path, content, false);
     return lines;
   }
@@ -205,6 +194,33 @@ public class Utils {
       e.printStackTrace();
     }
     return results;
+  }
+
+  /**
+   * Read csv file and return a list of records
+   *
+   * @param path
+   * @param delimiter
+   * @return
+   */
+  public static List<Record> readCSVAsRecord(String path, String delimiter) {
+    List<Record> records = new ArrayList<>();
+    CsvParserSettings settings = new CsvParserSettings();
+    settings.setHeaderExtractionEnabled(true);
+    settings.getFormat().setLineSeparator(System.getProperty("line.separator"));
+    settings.getFormat().setDelimiter(delimiter);
+    settings.selectFields("merge_commit", "parent1", "parent2", "merge_base");
+
+    CsvParser parser = new CsvParser(settings);
+
+    try (BufferedReader reader = new BufferedReader(new FileReader(path))) {
+      records = parser.parseAllRecords(reader);
+    } catch (FileNotFoundException e) {
+      e.printStackTrace();
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    return records;
   }
 
   /**
@@ -240,7 +256,7 @@ public class Utils {
   }
 
   /**
-   * Writes the given content in the file of the given file path, overwrite the original
+   * Writes the given content in the file of the given file path.
    *
    * @param filePath
    * @param content
@@ -288,7 +304,7 @@ public class Utils {
   /**
    * Scan all java files under the directory, return a list of SourceFiles
    *
-   * @param path target dir to scan
+   * @param path
    * @param javaSourceFiles
    * @param prefixPath to which the relative path is relative
    * @return
@@ -410,28 +426,29 @@ public class Utils {
   }
 
   /**
-   * Extract merge conflicts from the input file and write result into the output file, return a
-   * list of conflict blocks
+   * Extract merge conflicts from the file, in diff3 or diff2 style
    *
-   * @param inputPath
+   * @param path
    * @param diff3Style
+   * @param removeConflicts
    * @return
    */
   public static List<ConflictBlock> extractConflictBlocks(
-      String inputPath, String outputPath, boolean diff3Style) {
+      String path, boolean diff3Style, boolean removeConflicts) {
     return diff3Style
-        ? extractConflictBlocksDiff3(inputPath, outputPath)
-        : extractConflictBlocksDiff2(inputPath, outputPath);
+        ? extractConflictBlocksDiff3(path, removeConflicts)
+        : extractConflictBlocksDiff2(path, removeConflicts);
   }
 
   /**
-   * Extract merge conflicts and generate file without conflicts
+   * Extract merge conflicts from the file
    *
-   * @param inputPath
+   * @param path
+   * @param removeConflicts whether to remove conflict blocks while extracting
    * @return list of merge conflicts
    */
   public static List<ConflictBlock> extractConflictBlocksDiff2(
-      String inputPath, String outputPath) {
+      String path, boolean removeConflicts) {
     String leftConflictingContent = "";
     String rightConflictingContent = "";
     boolean isConflictOpen = false;
@@ -441,7 +458,7 @@ public class Utils {
     int endLOC = 0;
 
     List<ConflictBlock> mergeConflicts = new ArrayList<>();
-    List<String> lines = readFileToLines(inputPath);
+    List<String> lines = readFileToLines(path);
     Iterator<String> iterator = lines.iterator();
     while (iterator.hasNext()) {
       String line = iterator.next();
@@ -450,16 +467,22 @@ public class Utils {
         isConflictOpen = true;
         isLeftContent = true;
         startLOC = lineCounter;
-        iterator.remove();
+        if (removeConflicts) {
+          iterator.remove();
+        }
       } else if (line.contains(CONFLICT_RIGHT_BEGIN)) {
         isLeftContent = false;
-        iterator.remove();
+        if (removeConflicts) {
+          iterator.remove();
+        }
       } else if (line.contains(CONFLICT_RIGHT_END)) {
         endLOC = lineCounter;
         ConflictBlock mergeConflict =
             new ConflictBlock(leftConflictingContent, rightConflictingContent, startLOC, endLOC);
         mergeConflicts.add(mergeConflict);
-        iterator.remove();
+        if (removeConflicts) {
+          iterator.remove();
+        }
         // reset the flags
         isConflictOpen = false;
         isLeftContent = false;
@@ -472,24 +495,27 @@ public class Utils {
           } else {
             rightConflictingContent += line + "\n";
           }
-          iterator.remove();
+          if (removeConflicts) {
+            iterator.remove();
+          }
         }
       }
     }
-    if (!outputPath.isEmpty()) {
-      writeLinesToFile(outputPath, lines);
+    if (mergeConflicts.size() > 0 && removeConflicts) {
+      writeLinesToFile(path, lines);
     }
     return mergeConflicts;
   }
 
   /**
-   * Extract merge conflicts and generate file without conflicts
+   * Extract merge conflicts from the file
    *
-   * @param inputPath
+   * @param path
+   * @param removeConflicts whether to remove conflict blocks while extracting
    * @return list of merge conflicts
    */
   public static List<ConflictBlock> extractConflictBlocksDiff3(
-      String inputPath, String outputPath) {
+      String path, boolean removeConflicts) {
     // diff3 conflict style
     String leftConflictingContent = "";
     String baseConflictingContent = "";
@@ -502,7 +528,7 @@ public class Utils {
     int endLOC = 0;
 
     List<ConflictBlock> mergeConflicts = new ArrayList<>();
-    List<String> lines = readFileToLines(inputPath);
+    List<String> lines = readFileToLines(path);
     Iterator<String> iterator = lines.iterator();
     while (iterator.hasNext()) {
       String line = iterator.next();
@@ -511,14 +537,20 @@ public class Utils {
         isConflictOpen = true;
         isLeftContent = true;
         startLOC = lineCounter;
-        iterator.remove();
+        if (removeConflicts) {
+          iterator.remove();
+        }
       } else if (line.contains(CONFLICT_BASE_BEGIN)) {
         isLeftContent = false;
         isBaseContent = true;
-        iterator.remove();
+        if (removeConflicts) {
+          iterator.remove();
+        }
       } else if (line.contains(CONFLICT_RIGHT_BEGIN)) {
         isBaseContent = false;
-        iterator.remove();
+        if (removeConflicts) {
+          iterator.remove();
+        }
       } else if (line.contains(CONFLICT_RIGHT_END)) {
         endLOC = lineCounter;
         ConflictBlock mergeConflict =
@@ -529,7 +561,9 @@ public class Utils {
                 startLOC,
                 endLOC);
         mergeConflicts.add(mergeConflict);
-        iterator.remove();
+        if (removeConflicts) {
+          iterator.remove();
+        }
 
         // reset the flags
         isConflictOpen = false;
@@ -547,86 +581,16 @@ public class Utils {
           } else {
             rightConflictingContent += line + "\n";
           }
-          iterator.remove();
+          if (removeConflicts) {
+            iterator.remove();
+          }
         }
       }
     }
-    if (!outputPath.isEmpty()) {
-      writeLinesToFile(outputPath, lines);
+    if (mergeConflicts.size() > 0 && removeConflicts) {
+      writeLinesToFile(path, lines);
     }
     return mergeConflicts;
-  }
-
-  /**
-   * Convert all conflict blocks in diff3 to diff2 by deleting the base lines
-   *
-   * @param inputDir
-   */
-  public static void convertDiff3ToDiff2(String inputDir) throws Exception {
-    File file = new File(inputDir);
-    File[] files = file.listFiles();
-    for (File f : files) {
-      if (f.isDirectory()) {
-        String mergedFileDir = f.getAbsolutePath() + File.separator + Side.GIT.asString();
-        // for all files under it, delete the base lines and write back
-        ArrayList<SourceFile> temp = new ArrayList<>();
-        ArrayList<SourceFile> mergedFiles =
-            Utils.scanJavaSourceFiles(mergedFileDir, temp, mergedFileDir);
-        for (SourceFile sourceFile : mergedFiles) {
-          List<String> lines = readFileToLines(sourceFile.getAbsolutePath());
-          List<String> newLines = new ArrayList<>();
-          boolean isBaseLines = false;
-          for (String line : lines) {
-            if (line.startsWith(CONFLICT_BASE_BEGIN)) {
-              isBaseLines = true;
-            }
-            if (line.startsWith(CONFLICT_RIGHT_BEGIN)) {
-              isBaseLines = false;
-            }
-            if (!isBaseLines) {
-              newLines.add(line);
-            }
-          }
-          String newContent = newLines.stream().collect(Collectors.joining(System.lineSeparator()));
-          if (!writeContent(sourceFile.getAbsolutePath(), newContent)) {
-            System.err.println(sourceFile.getAbsolutePath());
-          }
-        }
-      }
-    }
-  }
-
-  public static void main(String[] args) {
-    List<String> repoNames = new ArrayList<>();
-    //    repoNames.add("junit4");
-    //    repoNames.add("javaparser");
-    //    repoNames.add("gradle");
-    //    repoNames.add("error-prone");
-    //    repoNames.add("antlr4");
-    //    repoNames.add("deeplearning4j");
-    //    repoNames.add("cassandra");
-    //    repoNames.add("elasticsearch");
-    repoNames.add("antlr4");
-    //    repoNames.add("storm");
-    for (String repo : repoNames) {
-      String repoDir = "D:\\github\\ref_conflicts_diff2 - Copy\\" + repo;
-      try {
-        File file = new File(repoDir);
-        File[] files = file.listFiles();
-        for (File f : files) {
-          if (f.isDirectory()) {
-            String sourceDir = f.getAbsolutePath();
-
-            String gitMergedDir = sourceDir + File.separator + Side.GIT.asString() + File.separator;
-            removeBlankLines(gitMergedDir);
-          }
-        }
-        //        convertDiff3ToDiff2(repoDir);
-        System.out.println("Done with " + repo);
-      } catch (Exception e) {
-        e.printStackTrace();
-      }
-    }
   }
 
   /**
@@ -901,7 +865,7 @@ public class Utils {
   }
 
   /**
-   * Compute the lines of code in a file, ignore blank lines
+   * Compute the lines of code in a file, without comments or blanck lines
    *
    * @param path
    * @return

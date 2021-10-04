@@ -21,8 +21,7 @@ public enum NodeType {
   METHOD(6, "method"),
   ENUM_CONSTANT(6, "enum_constant"),
   INITIALIZER_BLOCK(6, "initializer_block"),
-  ANNOTATION_MEMBER(6, "annotation_member"),
-  ORPHAN_COMMENT(6, "orphan_comment");
+  ANNOTATION_MEMBER(6, "annotation_member");
 
   // the hierarchy/nesting level of code elements, from outer to inner
   public int level;

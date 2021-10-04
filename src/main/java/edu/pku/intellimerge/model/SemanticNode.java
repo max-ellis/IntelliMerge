@@ -12,13 +12,14 @@ import java.util.stream.Collectors;
 public abstract class SemanticNode {
   // context info
   public NodeContext context;
-  // mainly for preserving the original format
-  public int followingEOL = 1;
+
   // self attributes
   // signature
   private Boolean needToMerge;
+
   private SemanticNode parent;
   private List<SemanticNode> children;
+
   private Integer nodeID;
   private NodeType nodeType;
   private String displayName;
@@ -26,7 +27,7 @@ public abstract class SemanticNode {
   // original signature in source code, here we generalize the definition of signature
   private String originalSignature;
   private String comment;
-  // annotations can be used before package, class, constructor, terminal/interface,
+  // annotations can be used before package, class, constructor, terminalNodeSimilarity/interface,
   // field, parameter,
   // local variables
   private List<String> annotations;
@@ -123,10 +124,6 @@ public abstract class SemanticNode {
     return displayName;
   }
 
-  public void setDisplayName(String displayName) {
-    this.displayName = displayName;
-  }
-
   public String getQualifiedName() {
     return qualifiedName;
   }
@@ -173,9 +170,7 @@ public abstract class SemanticNode {
     final int prime = 31;
     int result = 1;
     result = prime * result + ((getNodeType() == null) ? 0 : getNodeType().hashCode());
-    result =
-        prime * result
-            + ((getSignature() == null) ? 0 : getSignature().replaceAll("\\s", "").hashCode());
+    result = prime * result + ((getSignature() == null) ? 0 : getSignature().hashCode());
     return result;
   }
 

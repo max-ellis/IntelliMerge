@@ -57,7 +57,7 @@ public class UnOrderedASTVisitor extends VoidVisitorAdapter<Graph<SemanticNode, 
 
   @Override
   public void visit(CompilationUnit cu, Graph graph) {
-    // Don't forget to call super, it may find more terminal calls inside the arguments of this terminal
+    // Don't forget to call super, it may find more terminalNodeSimilarity calls inside the arguments of this terminalNodeSimilarity
     // call, for example.
     super.visit(cu, graph);
     System.out.println("COMPILATION_UNIT " + cu.getClass());
@@ -65,7 +65,7 @@ public class UnOrderedASTVisitor extends VoidVisitorAdapter<Graph<SemanticNode, 
 
   @Override
   public void visit(EnumDeclaration ed, Graph graph) {
-    // Don't forget to call super, it may find more terminal calls inside the arguments of this terminal
+    // Don't forget to call super, it may find more terminalNodeSimilarity calls inside the arguments of this terminalNodeSimilarity
     // call, for example.
     super.visit(ed, graph);
     System.out.println("Enum " + ed.getNameAsString());

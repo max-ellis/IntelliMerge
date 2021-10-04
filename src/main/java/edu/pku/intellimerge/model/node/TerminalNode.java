@@ -62,21 +62,18 @@ public class TerminalNode extends SemanticNode {
 
   @Override
   public SemanticNode shallowClone() {
-    TerminalNode clone =
-        new TerminalNode(
-            this.getNodeID(),
-            this.needToMerge(),
-            this.getNodeType(),
-            this.getDisplayName(),
-            this.getQualifiedName(),
-            this.getOriginalSignature(),
-            this.getComment(),
-            this.getAnnotations(),
-            this.getModifiers(),
-            this.getBody(),
-            this.getRange());
-    clone.followingEOL = this.followingEOL;
-    return clone;
+    return new TerminalNode(
+        this.getNodeID(),
+        this.needToMerge(),
+        this.getNodeType(),
+        this.getDisplayName(),
+        this.getQualifiedName(),
+        this.getOriginalSignature(),
+        this.getComment(),
+        this.getAnnotations(),
+        this.getModifiers(),
+        this.getBody(),
+        this.getRange());
   }
 
   @Override
