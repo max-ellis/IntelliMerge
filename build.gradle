@@ -20,7 +20,7 @@ jar {
 
 task fatJar(type: Jar) {
     manifest.from jar.manifest
-    classifier = 'all'
+    classifier = 'modified'
     from {
         configurations.runtime.collect { it.isDirectory() ? it : zipTree(it) }
     } {
@@ -36,9 +36,7 @@ artifacts {
 }
 
 group 'edu.pku.intellimerge'
-version '1.0.9'
-
-sourceCompatibility = 1.8
+version '1.0.7'
 
 repositories {
     mavenCentral()
@@ -49,23 +47,27 @@ repositories {
 
 dependencies {
     compile fileTree(dir: 'lib', include: ['*.jar'])
+    compile 'org.eclipse.jdt:org.eclipse.jdt.core:3.24.0'
     compile group: 'com.beust', name: 'jcommander', version: '1.72'
     compile group: 'com.github.javaparser', name: 'javaparser-core', version: '3.12.0'
     compile group: 'com.github.javaparser', name: 'javaparser-symbol-solver-core', version: '3.12.0'
     compile group: 'org.jgrapht', name: 'jgrapht-core', version: '1.3.0'
     compile group: 'org.jgrapht', name: 'jgrapht-io', version: '1.3.0'
+    compile group: 'com.google.guava', name: 'guava', version: '27.0.1-jre'
     compile group: 'com.googlecode.juniversalchardet', name: 'juniversalchardet', version: '1.0.3'
-    compile group: 'org.eclipse.jgit', name: 'org.eclipse.jgit', version: '5.2.0.201812061821-r'
+    compile group: 'org.eclipse.jgit', name: 'org.eclipse.jgit', version: '5.10.0.202012080955-r'
     compile group: 'commons-io', name: 'commons-io', version: '2.6'
     compile group: 'info.debatty', name: 'java-string-similarity', version: '1.1.0'
     compile 'com.google.googlejavaformat:google-java-format:1.7'
+    compile group: 'com.univocity', name: 'univocity-parsers', version: '2.8.1'
+    compile group: 'org.mongodb', name: 'mongo-java-driver', version: '3.10.1'
     compile group: 'io.reflectoring.diffparser', name: 'diffparser', version: '1.4'
     compile 'com.github.ertugrulcetin:CommentRemover:1.2'
 
     compile group: 'org.slf4j', name: 'slf4j-api', version: '1.7.25'
     compile group: 'org.slf4j', name: 'slf4j-log4j12', version: '1.7.25'
     compile group: 'log4j', name: 'log4j', version: '1.2.17'
-    
+
     testCompile group: 'org.assertj', name: 'assertj-core', version: '3.11.1'
     testCompile group: 'org.junit.jupiter', name: 'junit-jupiter-api', version: '5.4.0'
 }
